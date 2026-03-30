@@ -1,34 +1,35 @@
 #!/bin/sh
-# Prints Platform.numberOfProcessors vs nproc inside a Docker container.
+# Prints Platform.numberOfProcessors vs nproc vs raw cgroup values.
 # Run with: sh test_cpu.sh [cpu_limit]
 # Example:  sh test_cpu.sh 3
-#
-# On a 6-core VPS with --cpus=3 you should see:
-#   Platform.numberOfProcessors = 6   (sees all host CPUs — WRONG for benchmarks)
-#   nproc                        = 3   (respects the cgroup quota — CORRECT)
 
 CPU_LIMIT="${1:-3}"
 
 DART_SCRIPT='
 import "dart:io";
-import "dart:convert";
 
 Future<void> main() async {
   final platformCpus = Platform.numberOfProcessors;
+
+  // nproc
   final nprocResult = await Process.run("nproc", []);
   final nprocCpus = int.tryParse(nprocResult.stdout.toString().trim()) ?? -1;
 
-  print("Platform.numberOfProcessors : $platformCpus");
-  print("nproc                       : $nprocCpus");
+  // raw cgroup v2
+  String cgroupV2 = "not found";
+  try { cgroupV2 = File("/sys/fs/cgroup/cpu.max").readAsStringSync().trim(); } catch (_) {}
 
-  if (platformCpus != nprocCpus) {
-    print("");
-    print("MISMATCH — spawning \$platformCpus isolates wastes cores.");
-    print("Use nproc to get the cgroup-correct count (\$nprocCpus).");
-  } else {
-    print("");
-    print("OK — both agree on \$platformCpus.");
-  }
+  // raw cgroup v1
+  String cgroupV1Quota = "not found";
+  String cgroupV1Period = "not found";
+  try { cgroupV1Quota = File("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").readAsStringSync().trim(); } catch (_) {}
+  try { cgroupV1Period = File("/sys/fs/cgroup/cpu/cpu.cfs_period_us").readAsStringSync().trim(); } catch (_) {}
+
+  print("Platform.numberOfProcessors : \$platformCpus");
+  print("nproc                       : \$nprocCpus");
+  print("cgroupv2 /cpu.max           : \$cgroupV2");
+  print("cgroupv1 cfs_quota_us       : \$cgroupV1Quota");
+  print("cgroupv1 cfs_period_us      : \$cgroupV1Period");
 }
 '
 
