@@ -8,6 +8,7 @@ site/resources/
 .idea/
 obj/
 bin/
+!frameworks/fletch/bin/
 target/
 frameworks/blitz/zig-linux-*
 frameworks/blitz/.zig-cache

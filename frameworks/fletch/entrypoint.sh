@@ -5,6 +5,10 @@
 # EventHandler thread and the kernel distributes connections evenly.
 export LD_PRELOAD=/lib/reuseport_shim.so
 
+# Print a one-line GC summary for every collection to stderr.
+# Lets us see pause durations and heap pressure live during the benchmark.
+export DART_VM_OPTIONS="--verbose-gc"
+
 # Determine effective CPU count from cgroup limits (cgroupv2 and cgroupv1),
 # falling back to nproc when no limit is set.
 

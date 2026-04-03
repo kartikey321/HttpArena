@@ -22,6 +22,48 @@ const _mimeTypes = <String, String>{
 // Pre-computed once; reused on every request that needs an empty result.
 final _emptyJson = Uint8List.fromList(utf8.encode('{"items":[],"count":0}'));
 
+// ---------------------------------------------------------------------------
+// Per-isolate request metrics (no locking needed — single-threaded isolate).
+// ---------------------------------------------------------------------------
+class _Metrics {
+  int _count = 0;
+  int _totalUs = 0;
+
+  // Ring buffer of the last 2000 latencies for percentile calculation.
+  final _ring = List<int>.filled(2000, 0);
+  int _ringIdx = 0;
+
+  void record(int microseconds) {
+    _count++;
+    _totalUs += microseconds;
+    _ring[_ringIdx % _ring.length] = microseconds;
+    _ringIdx++;
+  }
+
+  Map<String, dynamic> toJson() {
+    final filled = _ringIdx < _ring.length ? _ringIdx : _ring.length;
+    final sorted = _ring.sublist(0, filled).toList()..sort();
+
+    int pct(double p) => filled == 0
+        ? 0
+        : sorted[((filled - 1) * p).round()];
+
+    return {
+      'pid': pid,
+      'requests': _count,
+      'avg_latency_us': _count > 0 ? _totalUs ~/ _count : 0,
+      'p50_latency_us': pct(0.50),
+      'p99_latency_us': pct(0.99),
+      'p999_latency_us': pct(0.999),
+      'rss_mb': (ProcessInfo.currentRss / 1024 / 1024).toStringAsFixed(1),
+      'max_rss_mb':
+          (ProcessInfo.maxRss / 1024 / 1024).toStringAsFixed(1),
+    };
+  }
+}
+
+final _metrics = _Metrics();
+
 class _StaticFile {
   final Uint8List data;
   final String contentType;
@@ -104,6 +146,24 @@ Future<void> _run(dynamic _) async {
     useCookieParser: false,
     logger: Logger(level: Level.off),
   );
+
+  // Middleware: time every request and record into per-isolate metrics.
+  // Overhead is one Stopwatch start/stop per request (~100ns) — negligible.
+  app.use((req, res, next) async {
+    final sw = Stopwatch()..start();
+    await next();
+    _metrics.record(sw.elapsedMicroseconds);
+  });
+
+  // Metrics endpoint — poll this with `watch curl` during the benchmark.
+  // Each process reports its own counters (SO_REUSEPORT routes randomly,
+  // so run several polls to sample across all processes).
+  app.get('/metrics', (req, res) {
+    res.bytes(
+      utf8.encode(jsonEncode(_metrics.toJson())),
+      contentType: 'application/json',
+    );
+  });
 
   app.get('/pipeline', (req, res) {
     res.text('ok');
